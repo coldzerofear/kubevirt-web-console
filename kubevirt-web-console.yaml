@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubevirt-web-console
+  namespace: kubevirt
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kubevirt-web-console-role-binding
+subjects:
+- kind: ServiceAccount
+  name: kubevirt-web-console
+  namespace: kubevirt
+roleRef:
+  kind: ClusterRole
+  name: kubevirt-web-console-role
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kubevirt-web-console-role
+rules:
+- apiGroups:
+  - subresources.kubevirt.io
+  resources:
+  - virtualmachineinstances/console
+  - virtualmachineinstances/vnc
+  verbs:
+  - get
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: kubevirt-web-console
+  name: kubevirt-web-console
+  namespace: kubevirt
+spec:
+  ports:
+  - port: 8001
+    protocol: TCP
+    targetPort: 8001
+    nodePort: 32003
+  selector:
+    app: kubevirt-web-console
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubevirt-web-console
+  namespace: kubevirt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubevirt-web-console
+  template:
+    metadata:
+      labels:
+        app: kubevirt-web-console
+    spec:
+      serviceAccountName: kubevirt-web-console
+      nodeSelector:
+        # node-role.kubernetes.io/master: ''
+        node-role.kubernetes.io/control-plane: ""
+      tolerations: 
+      - key: "node-role.kubernetes.io/master"
+        operator: "Equal"
+        value: ""
+        effect: "NoSchedule"
+      containers:
+      - name: console
+        image: coldzerofear/kubevirt-web-console:v0.1
+        imagePullPolicy: Always
+        livenessProbe:
+          httpGet:
+            port: 8001
+            path: /
+            scheme: HTTP
+          failureThreshold: 30
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5

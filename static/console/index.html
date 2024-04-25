@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Xterm</title>
+    <link rel="icon" type="image/x-icon" href="lib/xterm.ico">
+    <link rel="stylesheet" href="xterm/css/xterm.css" />
+    <style>
+        html,body{
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        #outerDiv{
+            padding: 2px 2px 2px 2px;
+        }
+        #terminal{
+            width: 100%;
+            height: 100%
+        }
+        .xterm-screen{
+            min-height: calc(100vh);
+        }
+    </style>
+</head>
+<body>
+<div id="outerDiv">
+    <div id="terminal"></div>
+</div>
+<script src="js/jquery-3.4.1.min.js"></script>
+<script src="xterm/lib/xterm.js" charset="utf-8"></script>
+<script src="js/webssh.js" charset="utf-8"></script>
+<script>
+    document.getElementById('outerDiv').style.height = window.innerHeight + 'px';
+    document.getElementById('outerDiv').style.width = window.innerWidth + 'px';
+
+    var term;
+    var client;
+
+    var c = parseInt($("#outerDiv").width() / 9) - 2;
+    var r = parseInt($("#outerDiv").height() / 18) - 1;
+
+    //terminal 大小改变
+    function resizeTerminal() {
+        c = parseInt($("#outerDiv").width() / 9) - 2;
+        r = parseInt($("#outerDiv").height() / 18) - 1;
+        term.resize(c, r);
+        // 通知服务端改变行列大小
+        //client.sendClientData("stty cols " + c + " rows " + r + "\r");
+    };
+
+    //限制最小宽/高度，避免排版错乱
+    var minWidth = $(window).width()*0.3;
+    var minHeight = $(window).height()*0.2;
+
+    window.addEventListener('resize', function() {
+        // 当窗口大小改变时，调整页面布局
+        if ($(window).width() > minWidth) {
+            document.getElementById('outerDiv').style.width = $(window).width() + 'px';
+        }
+        if ($(window).height() > minHeight) {
+            document.getElementById('outerDiv').style.height = $(window).height() + 'px';
+        }
+        resizeTerminal();
+    });
+
+    // This function extracts the value of one variable from the
+    // query string. If the variable isn't defined in the URL
+    // it returns the default value instead.
+    function readQueryVariable(name, defaultValue) {
+            // A URL with a query parameter can look like this (But will most probably get logged on the http server):
+            // https://www.example.com?myqueryparam=myvalue
+            //
+            // For privacy (Using a hastag #, the parameters will not be sent to the server)
+            // the url can be requested in the following way:
+            // https://www.example.com#myqueryparam=myvalue&password=secreatvalue
+            //
+            // Even Mixing public and non public parameters will work:
+            // https://www.example.com?nonsecretparam=example.com#password=secreatvalue
+            //
+            // Note that we use location.href instead of location.search
+            // because Firefox < 53 has a bug w.r.t location.search
+        const re = new RegExp('.*[?&]' + name + '=([^&#]*)'),
+              match = ''.concat(document.location.href, window.location.hash).match(re);
+        if (match) {
+                // We have to decode the URL since want the cleartext value
+            return decodeURIComponent(match[1]);
+        }
+        return defaultValue;
+    }
+
+    const host = readQueryVariable('host', window.location.hostname);
+    const port = readQueryVariable('port', window.location.port);
+    const name = readQueryVariable("name");
+    const namespace = readQueryVariable("namespace", "default");
+    const token = readQueryVariable('token');
+    const path = readQueryVariable('path', 'apis/subresources.kubevirt.io/v1/namespaces/'+ namespace + '/virtualmachineinstances/'+ name +'/console');
+
+    openTerminal({
+        host: host,
+        port: port,
+        path: path,
+        token: token,
+    });
+
+    function openTerminal(options){
+        client = new WSSHClient();
+
+        term = new Terminal({
+            cols: c, //列数
+            rows: r, //行数
+            rendererType: "canvas", //渲染类型
+            convertEol: true, //启用时，光标将设置为下一行的开头
+            cursorBlink: true, // 光标闪烁
+            cursorStyle: "block", // 光标样式  null | 'block' | 'underline' | 'bar'
+            scrollback: 10000, //回滚
+            disableStdin: false, //是否应禁用输入
+           // fontSize: 14, //字体大小
+            tabStopWidth: 8, //制表宽度
+            screenKeys: true,
+            theme: {
+                foreground: "#ECECEC", //字体
+                background: "#000000", //背景色
+                cursor: "help", //设置光标
+                lineHeight: 20
+            }
+        });
+        term.open(document.getElementById('terminal'));
+        term.focus();
+        //在页面上显示连接中...
+        term.write('Connecting...\r\n');
+        //限制和后端交互，只有输入回车键才显示结果
+//        term.prompt = () => {
+//            term.write("\r\n\x1b[33m$\x1b[0m ")
+//        };
+
+        var connecting = false;
+
+        var events = {
+            onError: function (error) {
+                //连接失败回调
+                connecting = false
+                term.write('Console connection error: ' + error + '\r\n');
+            },
+            onConnect: function () {
+                //连接成功回调
+                connecting = true
+                term.write("Successfully connected to " + name + " console !\n");
+                client.sendClientData("\r")
+                resizeTerminal();
+            },
+            onClose: function () {
+                //连接关闭回调
+                connecting = false
+                term.write("\rConsole connection closed !\r\n");
+            },
+            onData: function (data) {
+                //收到数据时回调
+                term.writeUtf8(data);
+            }
+        };
+
+        term.onData(function (data) {
+            //键盘输入时的回调函数
+            if (!connecting) {
+                term.write('Connecting...\r\n');
+                client.connect(options, events);
+            } else {
+                client.sendClientData(data);
+            }
+        });
+        //执行连接操作
+        client.connect(options, events);
+    }
+</script>
+</body>
+</html>
